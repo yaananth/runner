@@ -515,6 +515,8 @@ namespace GitHub.Runner.Listener
                                     Trace.Info($"Return code {returnCode} indicate worker encounter an unhandled exception or app crash, attach worker stdout/stderr to JobRequest result.");
 
                                     var jobServer = HostContext.GetService<IJobServer>();
+                                    // FYI: This is where we get the token, so potentially we get the OIDC token here and pass that as another property? Eventually this should get to JobRunner
+                                    // If we put it inside jobServer, that's fine, since var jobServer = HostContext.GetService<IJobServer>();we do that inside JobRunner, wohoo!
                                     VssCredentials jobServerCredential = VssUtil.GetVssCredential(systemConnection);
                                     VssConnection jobConnection = VssUtil.CreateConnection(systemConnection.Url, jobServerCredential);
                                     await jobServer.ConnectAsync(jobConnection);

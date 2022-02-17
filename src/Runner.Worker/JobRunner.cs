@@ -12,6 +12,7 @@ using GitHub.Runner.Common.Util;
 using GitHub.Runner.Sdk;
 using GitHub.Services.Common;
 using GitHub.Services.WebApi;
+using Websocket.Client;
 using Pipelines = GitHub.DistributedTask.Pipelines;
 
 namespace GitHub.Runner.Worker
@@ -47,13 +48,21 @@ namespace GitHub.Runner.Worker
             VssCredentials jobServerCredential = VssUtil.GetVssCredential(systemConnection);
             Uri jobServerUrl = systemConnection.Url;
 
+            //  create websocket now and pass that to jobServerQUeue
+            // TODO: get the websocket URL from the message
+            //var websocketUrl = $"ws://localhost:5004/actions/build/{message.Plan.PlanId}/{message.JobId}/lines";
+            var websocketUrl = "ws://localhost:5004/actions/build/7027662e-07aa-44fb-928e-5453f2d11a2b/7027662e-07aa-44fb-928e-5453f2d11a2b/lines";
+            Trace.Info($"Creating websocket client ..." + websocketUrl);
+            using var websocketClient = new WebsocketClient(new Uri(websocketUrl));
+            websocketClient.ReconnectTimeout = null;
+
             Trace.Info($"Creating job server with URL: {jobServerUrl}");
             // jobServerQueue is the throttling reporter.
             _jobServerQueue = HostContext.GetService<IJobServerQueue>();
             VssConnection jobConnection = VssUtil.CreateConnection(jobServerUrl, jobServerCredential, new DelegatingHandler[] { new ThrottlingReportHandler(_jobServerQueue) });
             await jobServer.ConnectAsync(jobConnection);
 
-            _jobServerQueue.Start(message);
+            _jobServerQueue.Start(message, websocketClient);
             HostContext.WritePerfCounter($"WorkerJobServerQueueStarted_{message.RequestId.ToString()}");
 
             IExecutionContext jobContext = null;

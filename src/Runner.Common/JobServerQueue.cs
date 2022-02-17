@@ -7,6 +7,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using GitHub.DistributedTask.WebApi;
 using GitHub.Runner.Sdk;
+using Websocket.Client;
+using Newtonsoft.Json;
 using Pipelines = GitHub.DistributedTask.Pipelines;
 
 namespace GitHub.Runner.Common
@@ -17,7 +19,7 @@ namespace GitHub.Runner.Common
         TaskCompletionSource<int> JobRecordUpdated { get; }
         event EventHandler<ThrottlingEventArgs> JobServerQueueThrottling;
         Task ShutdownAsync();
-        void Start(Pipelines.AgentJobRequestMessage jobRequest);
+        void Start(Pipelines.AgentJobRequestMessage jobRequest, WebsocketClient websocketClient);
         void QueueWebConsoleLine(Guid stepRecordId, string line, long? lineNumber = null);
         void QueueFileUpload(Guid timelineId, Guid timelineRecordId, string type, string name, string path, bool deleteSource);
         void QueueTimelineRecordUpdate(Guid timelineId, TimelineRecord timelineRecord);
@@ -79,15 +81,19 @@ namespace GitHub.Runner.Common
         private bool _webConsoleLineAggressiveDequeue = true;
         private bool _firstConsoleOutputs = true;
 
+        private WebsocketClient _websocketClient;
+
         public override void Initialize(IHostContext hostContext)
         {
             base.Initialize(hostContext);
             _jobServer = hostContext.GetService<IJobServer>();
         }
 
-        public void Start(Pipelines.AgentJobRequestMessage jobRequest)
+        public void Start(Pipelines.AgentJobRequestMessage jobRequest, WebsocketClient websocketClient)
         {
             Trace.Entering();
+
+            this._websocketClient = websocketClient;
 
             if (_queueInProcess)
             {
@@ -111,7 +117,7 @@ namespace GitHub.Runner.Common
 
             // Start three dequeue task
             Trace.Info("Start process web console line queue.");
-            _webConsoleLineDequeueTask = ProcessWebConsoleLinesQueueAsync();
+            _webConsoleLineDequeueTask = ProcessWebConsoleLinesQueueAsync(false);
 
             Trace.Info("Start process file upload queue.");
             _fileUploadDequeueTask = ProcessFilesUploadQueueAsync();
@@ -221,6 +227,8 @@ namespace GitHub.Runner.Common
 
         private async Task ProcessWebConsoleLinesQueueAsync(bool runOnce = false)
         {
+            Trace.Info($"Starting websocket...");
+            await this._websocketClient.Start();
             while (!_jobCompletionSource.Task.IsCompleted || runOnce)
             {
                 if (_webConsoleLineAggressiveDequeue && ++_webConsoleLineAggressiveDequeueCount > _webConsoleLineAggressiveDequeueLimit)
@@ -295,11 +303,20 @@ namespace GitHub.Runner.Common
                                 // we will not requeue failed batch, since the web console lines are time sensitive.
                                 if (batch[0].LineNumber.HasValue)
                                 {
-                                    await _jobServer.AppendTimelineRecordFeedAsync(_scopeIdentifier, _hubName, _planId, _jobTimelineId, _jobTimelineRecordId, stepRecordId, batch.Select(logLine => logLine.Line).ToList(), batch[0].LineNumber.Value, default(CancellationToken));
+                                    //await _jobServer.AppendTimelineRecordFeedAsync(_scopeIdentifier, _hubName, _planId, _jobTimelineId, _jobTimelineRecordId, stepRecordId, batch.Select(logLine => logLine.Line).ToList(), batch[0].LineNumber.Value, default(CancellationToken));
+                                    // create json data to send to websocket
+                                    var jsonData = JsonConvert.SerializeObject(new
+                                    {
+                                        stepRecordId,
+                                        startLine = batch[0].LineNumber.Value,
+                                        lines = batch.Select(logLine => logLine.Line).ToList()
+                                    });
+                                    Trace.Info($"Sending to websocket instead: {jsonData}");
+                                    this._websocketClient.Send(jsonData);
                                 }
                                 else
                                 {
-                                    await _jobServer.AppendTimelineRecordFeedAsync(_scopeIdentifier, _hubName, _planId, _jobTimelineId, _jobTimelineRecordId, stepRecordId, batch.Select(logLine => logLine.Line).ToList(), default(CancellationToken));
+                                    //await _jobServer.AppendTimelineRecordFeedAsync(_scopeIdentifier, _hubName, _planId, _jobTimelineId, _jobTimelineRecordId, stepRecordId, batch.Select(logLine => logLine.Line).ToList(), default(CancellationToken));
                                 }
 
                                 if (_firstConsoleOutputs)
