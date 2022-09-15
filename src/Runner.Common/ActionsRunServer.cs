@@ -8,27 +8,24 @@ using GitHub.Services.WebApi;
 
 namespace GitHub.Runner.Common
 {
-    [ServiceLocator(Default = typeof(RunServer))]
-    public interface IRunServer : IRunnerService
+    [ServiceLocator(Default = typeof(ActionsRunServer))]
+    public interface IActionsRunServer : IRunnerService
     {
         Task ConnectAsync(Uri serverUrl, VssCredentials credentials);
 
         Task<AgentJobRequestMessage> GetJobMessageAsync(string id, CancellationToken token);
     }
 
-    public sealed class RunServer : RunnerService, IRunServer
+    public sealed class ActionsRunServer : RunnerService, IActionsRunServer
     {
         private bool _hasConnection;
-        private Uri requestUri;
         private VssConnection _connection;
-        private RunServiceHttpClient _runServiceHttpClient;
+        private TaskAgentHttpClient _taskAgentClient;
 
-        public async Task ConnectAsync(Uri serverUri, VssCredentials credentials)
+        public async Task ConnectAsync(Uri serverUrl, VssCredentials credentials)
         {
-            requestUri = serverUri;
-
-            _connection = await EstablishVssConnection(new Uri(serverUri.Authority), credentials, TimeSpan.FromSeconds(100), rawConnection: true);
-            _runServiceHttpClient = await _connection.GetRawClientAsync<RunServiceHttpClient>();
+            _connection = await EstablishVssConnection(serverUrl, credentials, TimeSpan.FromSeconds(100));
+            _taskAgentClient = _connection.GetClient<TaskAgentHttpClient>();
             _hasConnection = true;
         }
 
@@ -43,10 +40,11 @@ namespace GitHub.Runner.Common
         public Task<AgentJobRequestMessage> GetJobMessageAsync(string id, CancellationToken cancellationToken)
         {
             CheckConnection();
-            var jobMessage = RetryRequest<AgentJobRequestMessage>(
-                async () => await _runServiceHttpClient.GetJobMessageAsync(requestUri, id, cancellationToken), cancellationToken);
+            var jobMessage = RetryRequest<AgentJobRequestMessage>(async () =>
+                                                    {
+                                                        return await _taskAgentClient.GetJobMessageAsync(id, cancellationToken);
+                                                    }, cancellationToken);
             return jobMessage;
         }
-
     }
 }

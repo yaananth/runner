@@ -34,7 +34,12 @@ namespace GitHub.Runner.Sdk
             }
         }
 
-        public static VssConnection CreateConnection(Uri serverUri, VssCredentials credentials, IEnumerable<DelegatingHandler> additionalDelegatingHandler = null, TimeSpan? timeout = null)
+        public static VssConnection CreateConnection(
+            Uri serverUri,
+            VssCredentials credentials,
+            IEnumerable<DelegatingHandler> additionalDelegatingHandler = null,
+            TimeSpan? timeout = null,
+            bool rawConnection = false)
         {
             VssClientHttpRequestSettings settings = VssClientHttpRequestSettings.Default.Clone();
 
@@ -71,7 +76,7 @@ namespace GitHub.Runner.Sdk
             // settings are applied to an HttpRequestMessage.
             settings.AcceptLanguages.Remove(CultureInfo.InvariantCulture);
 
-            VssConnection connection = new VssConnection(serverUri, new VssHttpMessageHandler(credentials, settings), additionalDelegatingHandler);
+            VssConnection connection = new VssConnection(serverUri, new VssHttpMessageHandler(credentials, settings), additionalDelegatingHandler, rawConnection);
             return connection;
         }
 

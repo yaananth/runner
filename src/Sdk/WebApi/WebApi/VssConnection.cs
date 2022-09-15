@@ -37,8 +37,9 @@ namespace GitHub.Services.WebApi
         public VssConnection(
             Uri baseUrl,
             VssHttpMessageHandler innerHandler,
-            IEnumerable<DelegatingHandler> delegatingHandlers)
-            : this(baseUrl, innerHandler, delegatingHandlers, true)
+            IEnumerable<DelegatingHandler> delegatingHandlers,
+            Boolean rawConnection = false)
+            : this(baseUrl, innerHandler, delegatingHandlers, true, rawConnection)
         {
         }
 
@@ -46,11 +47,13 @@ namespace GitHub.Services.WebApi
             Uri baseUrl,
             VssHttpMessageHandler innerHandler,
             IEnumerable<DelegatingHandler> delegatingHandlers,
-            Boolean allowUnattributedClients)
+            Boolean allowUnattributedClients,
+            Boolean rawConnection = false)
         {
             ArgumentUtility.CheckForNull(baseUrl, "baseUrl");
             ArgumentUtility.CheckForNull(innerHandler, "innerHandler");
 
+            m_rawConnection = rawConnection;
             // Permit delegatingHandlers to be null
             m_delegatingHandlers = delegatingHandlers = delegatingHandlers ?? Enumerable.Empty<DelegatingHandler>();
 
@@ -74,7 +77,10 @@ namespace GitHub.Services.WebApi
                 m_pipeline = m_innerHandler;
             }
 
-            m_serverDataProvider = new VssServerDataProvider(this, m_pipeline, m_baseUrl.AbsoluteUri);
+            if (!m_rawConnection)
+            {
+                m_serverDataProvider = new VssServerDataProvider(this, m_pipeline, m_baseUrl.AbsoluteUri);
+            }
 
             if (innerHandler.Credentials != null)
             {
@@ -87,7 +93,7 @@ namespace GitHub.Services.WebApi
         }
 
         /// <summary>
-        /// 
+        ///
         /// </summary>
         public Task ConnectAsync(
             CancellationToken cancellationToken = default(CancellationToken))
@@ -132,11 +138,11 @@ namespace GitHub.Services.WebApi
                 promptToSetParametersOn.Parameters = parameters;
             }
 
-            return ServerDataProvider.ConnectAsync(ConnectOptions.None, cancellationToken);
+            return m_rawConnection ? Task.CompletedTask : ServerDataProvider.ConnectAsync(ConnectOptions.None, cancellationToken);
         }
 
         /// <summary>
-        /// 
+        ///
         /// </summary>
         public void Disconnect()
         {
@@ -149,12 +155,12 @@ namespace GitHub.Services.WebApi
             }
             finally
             {
-                ServerDataProvider.DisconnectAsync().SyncResult();
+                ServerDataProvider?.DisconnectAsync().SyncResult();
             }
         }
 
         /// <summary>
-        /// 
+        ///
         /// </summary>
         /// <typeparam name="T"></typeparam>
         /// <returns></returns>
@@ -164,7 +170,7 @@ namespace GitHub.Services.WebApi
         }
 
         /// <summary>
-        /// 
+        ///
         /// </summary>
         /// <typeparam name="T"></typeparam>
         /// <returns></returns>
@@ -202,8 +208,22 @@ namespace GitHub.Services.WebApi
             return (T)await GetClientServiceImplAsync(typeof(T), serviceIdentifier, GetClientInstanceAsync, cancellationToken).ConfigureAwait(false);
         }
 
+        public async Task<T> GetRawClientAsync<T>(CancellationToken cancellationToken = default(CancellationToken)) where T : VssHttpClientBase
+        {
+            CheckForDisposed();
+            Type clientType = typeof(T);
+            Guid serviceIdentifier = GetServiceIdentifier(clientType);
+
+            if (serviceIdentifier == Guid.Empty && !m_allowUnattributedClients)
+            {
+                throw new CannotGetUnattributedClientException(clientType);
+            }
+
+            return (T)await GetClientServiceImplAsync(typeof(T), serviceIdentifier, GetRawClientInstanceAsync, cancellationToken).ConfigureAwait(false);
+        }
+
         /// <summary>
-        /// 
+        ///
         /// </summary>
         /// <param name="requestedType"></param>
         /// <param name="getInstanceAsync"></param>
@@ -252,7 +272,7 @@ namespace GitHub.Services.WebApi
         }
 
         /// <summary>
-        /// 
+        ///
         /// </summary>
         /// <param name="managedType"></param>
         /// <param name="cancellationToken"></param>
@@ -265,8 +285,37 @@ namespace GitHub.Services.WebApi
             return GetClientInstanceAsync(managedType, serviceIdentifier, cancellationToken, null, null);
         }
 
+        private Task<Object> GetRawClientInstanceAsync(
+            Type managedType,
+            Guid serviceIdentifier,
+            CancellationToken cancellationToken)
+        {
+            return GetRawClientInstanceAsync(managedType, null, null);
+        }
+
+        private Task<Object> GetRawClientInstanceAsync(
+            Type managedType,
+            VssHttpRequestSettings settings,
+            DelegatingHandler[] handlers)
+        {
+            CheckForDisposed();
+
+            VssHttpClientBase toReturn = null;
+
+            if (settings != null)
+            {
+                toReturn = (VssHttpClientBase)Activator.CreateInstance(managedType, m_baseUrl, Credentials, settings, handlers);
+            }
+            else
+            {
+                toReturn = (VssHttpClientBase)Activator.CreateInstance(managedType, m_baseUrl, m_pipeline, false /* disposeHandler */);
+            }
+
+            return Task.FromResult((Object)toReturn);
+        }
+
         /// <summary>
-        /// 
+        ///
         /// </summary>
         /// <param name="managedType"></param>
         /// <returns></returns>
@@ -330,7 +379,7 @@ namespace GitHub.Services.WebApi
         }
 
         /// <summary>
-        /// 
+        ///
         /// </summary>
         /// <param name="managedType"></param>
         /// <param name="cancellationToken"></param>
@@ -362,7 +411,7 @@ namespace GitHub.Services.WebApi
         }
 
         /// <summary>
-        /// 
+        ///
         /// </summary>
         /// <param name="managedType"></param>
         /// <returns></returns>
@@ -469,7 +518,7 @@ namespace GitHub.Services.WebApi
         }
 
         /// <summary>
-        /// 
+        ///
         /// </summary>
         public Uri Uri
         {
@@ -480,7 +529,7 @@ namespace GitHub.Services.WebApi
         }
 
         /// <summary>
-        /// 
+        ///
         /// </summary>
         public VssHttpMessageHandler InnerHandler
         {
@@ -491,7 +540,7 @@ namespace GitHub.Services.WebApi
         }
 
         /// <summary>
-        /// 
+        ///
         /// </summary>
         public IEnumerable<DelegatingHandler> DelegatingHandlers
         {
@@ -502,7 +551,7 @@ namespace GitHub.Services.WebApi
         }
 
         /// <summary>
-        /// 
+        ///
         /// </summary>
         public VssCredentials Credentials
         {
@@ -513,7 +562,7 @@ namespace GitHub.Services.WebApi
         }
 
         /// <summary>
-        /// 
+        ///
         /// </summary>
         public VssClientHttpRequestSettings Settings
         {
@@ -557,7 +606,7 @@ namespace GitHub.Services.WebApi
         }
 
         /// <summary>
-        /// 
+        ///
         /// </summary>
         [EditorBrowsable(EditorBrowsableState.Never)]
         public Identity.Identity AuthenticatedIdentity
@@ -569,15 +618,9 @@ namespace GitHub.Services.WebApi
         }
 
         /// <summary>
-        /// 
+        ///
         /// </summary>
-        public Boolean HasAuthenticated
-        {
-            get
-            {
-                return ServerDataProvider.HasConnected;
-            }
-        }
+        public Boolean HasAuthenticated => ServerDataProvider == null || ServerDataProvider.HasConnected;
 
         /// <summary>
         /// The connection to the parent host for this VSS connection. If this connection is to a collection host,
@@ -637,6 +680,7 @@ namespace GitHub.Services.WebApi
         private VssConnection m_parentConnection;
         private Object m_parentConnectionLock = new Object();
 
+        private bool m_rawConnection = false;
         private readonly Uri m_baseUrl;
         private readonly HttpMessageHandler m_pipeline;
         private readonly VssHttpMessageHandler m_innerHandler;
@@ -677,19 +721,19 @@ namespace GitHub.Services.WebApi
     }
 
     /// <summary>
-    /// 
+    ///
     /// </summary>
     public interface IVssClientService
     {
         /// <summary>
-        /// 
+        ///
         /// </summary>
         /// <param name="connection"></param>
         void Initialize(VssConnection connection);
     }
 
     /// <summary>
-    /// 
+    ///
     /// </summary>
     [AttributeUsage(AttributeTargets.Class | AttributeTargets.Interface, AllowMultiple = false)]
     [SuppressMessage("Microsoft.Design", "CA1019:DefineAccessorsForAttributeArguments", Justification = "FxCop can't tell that we have an accessor.")]
@@ -719,7 +763,7 @@ namespace GitHub.Services.WebApi
     }
 
     /// <summary>
-    /// 
+    ///
     /// </summary>
     [ExceptionMapping("0.0", "3.0", "ExtensibleServiceTypeNotRegisteredException", "GitHub.Services.Client.ExtensibleServiceTypeNotRegisteredException, GitHub.Services.Client, Version=14.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a")]
     public class ExtensibleServiceTypeNotRegisteredException : VssException
@@ -736,7 +780,7 @@ namespace GitHub.Services.WebApi
     }
 
     /// <summary>
-    /// 
+    ///
     /// </summary>
     [ExceptionMapping("0.0", "3.0", "ExtensibleServiceTypeNotValidException", "GitHub.Services.Client.ExtensibleServiceTypeNotValidException, GitHub.Services.Client, Version=14.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a")]
     public class ExtensibleServiceTypeNotValidException : VssException

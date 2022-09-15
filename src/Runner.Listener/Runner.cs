@@ -13,6 +13,7 @@ using GitHub.Runner.Common;
 using GitHub.Runner.Listener.Check;
 using GitHub.Runner.Listener.Configuration;
 using GitHub.Runner.Sdk;
+using GitHub.Services.OAuth;
 using GitHub.Services.WebApi;
 using Pipelines = GitHub.DistributedTask.Pipelines;
 
@@ -489,6 +490,7 @@ namespace GitHub.Runner.Listener
                             // Broker flow
                             else if (string.Equals(message.MessageType, JobRequestMessageTypes.RunnerJobRequest, StringComparison.OrdinalIgnoreCase))
                             {
+                                Trace.Info($"YASH: Broker flow for message '{message.MessageId}'.");
                                 if (autoUpdateInProgress || runOnceJobReceived)
                                 {
                                     skipMessageDeletion = true;
@@ -497,16 +499,26 @@ namespace GitHub.Runner.Listener
                                 else
                                 {
                                     var messageRef = StringUtil.ConvertFromJson<RunnerJobRequestRef>(message.Body);
+                                    Pipelines.AgentJobRequestMessage jobRequestMessage = null;
 
                                     // Create connection
                                     var credMgr = HostContext.GetService<ICredentialManager>();
                                     var creds = credMgr.LoadCredentials();
 
-                                    var runServer = HostContext.CreateService<IRunServer>();
-                                    await runServer.ConnectAsync(new Uri(settings.ServerUrl), creds);
-                                    var jobMessage = await runServer.GetJobMessageAsync(messageRef.RunnerRequestId, messageQueueLoopTokenSource.Token);
+                                    if (string.IsNullOrEmpty(messageRef.RunServiceUrl))
+                                    {
+                                        var actionsRunServer = HostContext.CreateService<IActionsRunServer>();
+                                        await actionsRunServer.ConnectAsync(new Uri(settings.ServerUrl), creds);
+                                        jobRequestMessage = await actionsRunServer.GetJobMessageAsync(messageRef.RunnerRequestId, messageQueueLoopTokenSource.Token);
+                                    }
+                                    else
+                                    {
+                                        var runServer = HostContext.CreateService<IRunServer>();
+                                        await runServer.ConnectAsync(new Uri(messageRef.RunServiceUrl), creds);
+                                        jobRequestMessage = await runServer.GetJobMessageAsync(messageRef.RunnerRequestId, messageQueueLoopTokenSource.Token);
+                                    }
 
-                                    jobDispatcher.Run(jobMessage, runOnce);
+                                    jobDispatcher.Run(jobRequestMessage, runOnce);
                                     if (runOnce)
                                     {
                                         Trace.Info("One time used runner received job message.");
